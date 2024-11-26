@@ -17,9 +17,9 @@ class AngleEncoding:
         self.circuit = QuantumCircuit(n_qubits)
 
         # 引入参数
-        param = [Parameter(f'x[{i}]') for i in range(n_features)]
+        self.param = [Parameter(f'x[{i}]') for i in range(n_features)]
 
         for i in range(0, n_features):
-            self.circuit.ry(param[i], i%n_qubits)
+            self.circuit.ry(self.param[i], i % n_qubits)
 
         self.circuit.barrier()

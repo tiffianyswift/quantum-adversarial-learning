@@ -45,14 +45,27 @@ class AmplitudeModel:
 
     # 求解析梯度
     def solve_encoding_gradient(self):
+
         pass
 
     # 求解估计梯度
     def evaluate_encoding_gradient(self):
         pass
 
-    def solve_ansatz_gradient(self):
-        pass
+    def solve_ansatz_gradient(self, x, loss_grad):
+        original_param = self.param
+        grad = np.zeros(original_param.shape)
+        for i, param in enumerate(original_param):
+            self.param[i] = param + np.pi / 2
+            exps_right = self(x)
+
+            self.param[i] = param - np.pi / 2
+            exps_left = self(x)
+            # 这里是算batch的
+            grad[i] = np.sum(loss_grad * (exps_right - exps_left) / 2)
+
+            self.param[i] = param
+        return grad
 
     def evaluate_ansatz_gradient(self):
         pass
@@ -90,27 +103,48 @@ class AngleModel:
             self.param = np.load(path)
 
     # 求解析梯度
-    def solve_encoding_gradient(self):
-        pass
+    def solve_encoding_gradient(self, x, loss_grad):
+        # 不像ansatz可以同时求一个batch对于ansatz参数的梯度，必须逐个求
+        original_x = x
+        num_samples = x.shape[0]
+        grad = np.zeros(original_x.shape)
+        for idx in range(num_samples):
+            for i, x_point in enumerate(original_x[idx]):
+                x[idx][i] = x_point + np.pi / 2
+                exps_right = self(x[idx:idx+1][:])
+
+                x[idx][i] = x_point - np.pi / 2
+                exps_left = self(x[idx:idx+1][:])
+
+                grad[idx][i] = np.sum(loss_grad * (exps_right - exps_left) / 2)
+
+                x[idx][i] = x_point
+
+        return grad
 
     # 求解估计梯度
     def evaluate_encoding_gradient(self):
         pass
 
-    def solve_ansatz_gradient(self):
-        pass
+    def solve_ansatz_gradient(self, x, loss_grad):
+        original_param = self.param
+        grad = np.zeros(original_param.shape)
+        for i, param in enumerate(original_param):
+            self.param[i] = param + np.pi / 2
+            exps_right = self(x)
+
+            self.param[i] = param - np.pi / 2
+            exps_left = self(x)
+            # 这里是算batch的
+            grad[i] = np.sum(loss_grad * (exps_right - exps_left)/2)
+
+            self.param[i] = param
+        return grad
 
     def evaluate_ansatz_gradient(self):
         pass
 
 
-if __name__ == '__main__':
-    ansat = RealAmplitude(4, 2)
-    observable = TwoClassifyObservable(4)
-    model1 = AngleModel(4, 5, ansat, observable)
-    x = torch.tensor(np.array([[1, 2, 3, 4, 5]]))
-    output = model1(x)
-    print(output)
 
 
 
