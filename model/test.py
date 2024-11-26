@@ -8,6 +8,7 @@ from utils.util import get_grad
 
 from qiskit import QuantumCircuit
 
+# 获取某个态对于某个坐标的倒数，其结果也是一个态
 def getGrad(n_qubits, num):
     positions = []
     position = 1
@@ -22,6 +23,49 @@ def getGrad(n_qubits, num):
     for item in positions:
         qc.cnot(0, item)
     return qc
+
+
+# 获取对抗样本需要添加的梯度
+# param_circuit 被攻击的模型的参数化量子线路
+# inputs 用于计算梯度的样本
+# observable param_circuit所使用的可观测量
+
+def getAdvGrad(param_circuit, inputs, observable):
+    n_qubits = param_circuit.num_qubits
+    inputqc = QuantumCircuit(n_qubits + 1)
+
+    target_state = inputs / np.linalg.norm(inputs)
+    target_state = np.array(target_state, dtype=np.float64)
+    _EPS = 1e-10
+    while not math.isclose(sum(np.absolute(target_state) ** 2), 1.0, abs_tol=_EPS):
+        norm = np.sqrt(sum(np.abs(target_state) ** 2))
+        target_state = target_state / norm
+
+    controlled_prepare = StatePreparation(target_state).control()
+
+    inputqc.h(0)
+    inputqc.append(controlled_prepare, range(n_qubits + 1))
+
+    grad_list = []
+
+    for index, datapoint in enumerate(inputs):
+        print(index)
+        qc = deepcopy(inputqc)
+        grad_circuit = getGrad(n_qubits + 1, index)
+        qc.x(0)
+        qc.append(grad_circuit, range(n_qubits + 1))
+        qc.x(0)
+
+        qc.append(param_circuit, range(1, n_qubits + 1))
+        qc.cz(control_qubit=0, target_qubit=1)
+        qc.h(0)
+
+        qc.save_expectation_value(quantum_info.Pauli(observable), [0], observable)
+
+        transpiled_qc = transpile(qc, Aer.get_backend('qasm_simulator'))
+        job = Aer.get_backend('qasm_simulator').run(transpiled_qc)
+        grad_list.append(job.result().data()[observable])
+    return grad_list
 
 if __name__ == '__main__':
     ansat = RealAmplitude(4, 2)
