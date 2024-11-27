@@ -49,8 +49,21 @@ class AmplitudeModel:
         pass
 
     # 求解估计梯度
-    def evaluate_encoding_gradient(self):
-        pass
+    def evaluate_encoding_gradient(self, x, loss_grad, eps=1e-13):
+        original_x = x
+        num_samples = x.shape[0]
+        grad = np.zeros(original_x.shape)
+        for idx in range(num_samples):
+            for i, x_point in enumerate(original_x[idx]):
+                x[idx][i] = x_point + eps
+                right = self(x[idx:idx+1][:])
+                x[idx][i] = x_point - eps
+                left = self(x[idx:idx+1][:])
+                # 还有必要np.sum吗？
+                grad[idx][i] = np.sum(loss_grad * (right-left) / (2*eps))
+                x[idx][i] = x_point
+        return grad
+
 
     def solve_ansatz_gradient(self, x, loss_grad):
         original_param = self.param
