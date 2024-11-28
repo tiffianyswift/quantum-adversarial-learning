@@ -36,6 +36,9 @@ class AmplitudeModel:
 
         return job.result().values
 
+    def get_fixed_ansatz_circuit(self):
+        return self.ansatz.get_fixed_ansatz_circuit(self.param)
+
     def dump(self, path):
         np.save(path, self.param)
 
@@ -107,6 +110,9 @@ class AngleModel:
         job = estimator.run([self.circuit] * num_samples, [self.observables] * num_samples, theta)
 
         return job.result().values
+
+    def get_fixed_ansatz_circuit(self):
+        return self.ansatz.get_fixed_ansatz_circuit(self.param)
 
     def dump(self, path):
         np.save(path, self.param)

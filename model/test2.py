@@ -1,7 +1,7 @@
 import qiskit
 from qiskit import QuantumCircuit, Aer, transpile, assemble
 from qiskit.visualization import plot_histogram
-from qiskit.quantum_info import Statevector
+from qiskit.quantum_info import Statevector, SparsePauliOp
 from qiskit.circuit.library import StatePreparation
 from qiskit_machine_learning.circuit.library import RawFeatureVector
 import torch
@@ -15,6 +15,7 @@ from qiskit import quantum_info
 from ansatz import RealAmplitude
 from model import AmplitudeModel
 from observable import TwoClassifyObservable
+from qiskit.primitives import Estimator
 
 n_qubits = 8
 q_depth = 2
@@ -36,23 +37,7 @@ class Hybrid(torch.nn.Module):
 # 获取模型参数，构造分类器线路
 def getUtheta():
     model = torch.load("..\model_saved\model_epoch_13.pth")
-    param = model.state_dict()['q_params']
-    data_param = torch.reshape(param, (3, q_depth + 1, n_qubits)).cpu().numpy()
-    circuit = QuantumCircuit(n_qubits, name="U(theta)")
 
-    for j in range(q_depth):
-        for k in range(n_qubits):
-            circuit.h(k)
-            circuit.u(data_param[0][j][k], data_param[1][j][k], data_param[2][j][k], k)
-#
-        for m in range(0, n_qubits):
-            circuit.cnot(m, (m + 1) % (n_qubits))
-        circuit.barrier()
-    for qubit in range(n_qubits):
-        circuit.u(data_param[0][q_depth][qubit],
-                  data_param[1][q_depth][qubit],
-                  data_param[2][q_depth][qubit], qubit)
-    return circuit
 
 # 获取某个态对于某个坐标的倒数，其结果也是一个态
 def getGrad(n_qubits, num):
@@ -87,6 +72,7 @@ def getAdvGrad(param_circuit, inputs, observable):
         norm = np.sqrt(sum(np.abs(target_state) ** 2))
         target_state = target_state / norm
 
+    print("target_state", type(target_state))
     controlled_prepare = StatePreparation(target_state).control()
 
     inputqc.h(0)
@@ -95,7 +81,6 @@ def getAdvGrad(param_circuit, inputs, observable):
     grad_list = []
 
     for index, datapoint in enumerate(inputs):
-        print(index)
         qc = deepcopy(inputqc)
         grad_circuit = getGrad(n_qubits + 1, index)
         qc.x(0)
@@ -113,70 +98,91 @@ def getAdvGrad(param_circuit, inputs, observable):
         grad_list.append(job.result().data()[observable])
     return grad_list
 
-# 参数1 模型    type: qiskit类型的量子线路，2分类,不包含初态制备
-# 参数2 可观测量  type：模型使用的可观测量，应该为单比特
-# 参数3  数据   type: 数据，其维度应该小于2**n_qubits
-# 应该传入一个二分类分类器
-def getAdvExample(param_circuit, data, observable="Z"):
+def get_adv_grad(param_circuit, inputs, observable):
+    def get_grad_circuit(n_qubits, index):
+        positions = [pos for pos, bit in enumerate(bin(index)[:1:-1], start=1) if bit == '1']
+        grad_circuit = QuantumCircuit(n_qubits, name="get_grad")
+        for pos in positions:
+            grad_circuit.cnot(0, pos)
+        return grad_circuit
+
+    def normalize_state(state_vector):
+        eps = 1e-10
+        while not math.isclose(sum(np.abs(state_vector) ** 2), 1.0, abs_tol=eps):
+            state_vector /= np.linalg.norm(state_vector)
+        return state_vector
+
     n_qubits = param_circuit.num_qubits
-    inputs = np.array(data).flatten()
+    input_qc = QuantumCircuit(n_qubits + 1)
+    target_state = normalize_state(inputs)
+    target_state = np.array(target_state, dtype=np.float64)
+    controlled_prepare = StatePreparation(target_state).control()
 
-    grad_k = getAdvGrad(param_circuit, inputs, observable)
-    target_state = np.array(inputs, dtype=np.float64) / np.linalg.norm(inputs)
-    _EPS = 1e-10
+    input_qc.h(0)
+    input_qc.append(controlled_prepare, range(n_qubits + 1))
 
-    while not math.isclose(sum(np.absolute(target_state) ** 2), 1.0, abs_tol=_EPS):
-        norm = np.sqrt(sum(np.abs(target_state) ** 2))
-        target_state = target_state / norm
+    grad_list = []
+    estimator = Estimator()
+    for index, _ in enumerate(inputs):
+        qc = deepcopy(input_qc)
+        qc.barrier()
+        grad_circuit = get_grad_circuit(n_qubits + 1, index)
+        qc.x(0)
+        qc.barrier()
+        qc.compose(grad_circuit, inplace=True)
+        qc.barrier()
+        qc.x(0)
+        qc.barrier()
+        qc.compose(param_circuit, inplace=True)
+        qc.barrier()
+        qc.cz(control_qubit=0, target_qubit=1)
+        qc.barrier()
+        qc.h(0)
+        qc.barrier()
+        # print(qc)
+        lis = [("IIIIZ", 1)]
+        observable = SparsePauliOp.from_list(lis)
+        job = estimator.run(qc, observable)
+        grad_list.append(job.result().values[0])
 
-
-    # 初态制备
-    predict_circuit = QuantumCircuit(n_qubits)
-    state_pre = StatePreparation(target_state)
-    predict_circuit.append(state_pre, range(0, n_qubits))
-    predict_circuit.append(param_circuit, range(0, n_qubits))
-    predict_circuit.save_expectation_value(quantum_info.Pauli(observable), [0], observable)
-    transpiled_qc = transpile(predict_circuit, Aer.get_backend('qasm_simulator'))
-    job = Aer.get_backend('qasm_simulator').run(transpiled_qc)
-    y_predict = job.result().data()[observable]
-
-    # 对抗样本
-    adv_example = target_state + 1 * (y_predict - labels.item()) * np.array(grad_k)
-
-    return adv_example
-
-
-
-# if __name__ == '__main__':
-#     ansat = RealAmplitude(4, 2)
-#     observable = TwoClassifyObservable(4)
-#     model1 = AmplitudeModel(4, ansat, observable)
-#
-#     data = torch.tensor(np.random.randn(1, 16))
-#     print(type(model1.ansatz.circuit), type(data[0]))
-#     circuit = QuantumCircuit(4)
-#     qc = getAdvExample(circuit, data[0])
-#     print(qc)
+    return grad_list
 
 
 
 if __name__ == '__main__':
-    # 获取数据源，dataloader
-    n_test_samples = 64
-    batch_size = 1
-    X_test = datasets.MNIST(root='../data', train=False, download=True,
-                            transform=transforms.Compose([transforms.Resize([16, 16]), transforms.ToTensor()]))
+    ansat = RealAmplitude(4, 2)
+    observable = TwoClassifyObservable(4)
+    model1 = AmplitudeModel(4, ansat, observable)
 
-    idx = np.concatenate(
-        (np.where(X_test.targets == 0)[0][:n_test_samples], np.where(X_test.targets == 1)[0][:n_test_samples]))
-    X_test.data = X_test.data[idx]
-    X_test.targets = X_test.targets[idx]
-    test_loader = torch.utils.data.DataLoader(X_test, batch_size=batch_size, shuffle=True)
-    data_iter = iter(test_loader)
-    inputs, labels = next(data_iter)
-    param_circuit = getUtheta()
-    #
-    print(param_circuit)
-    print(type(param_circuit), type(inputs))
-    res = getAdvExample(param_circuit, inputs)
+    data = torch.tensor(np.random.randn(1, 16))
+    print(type(model1.ansatz.circuit), type(data[0]))
+    circuit = QuantumCircuit(4)
+    qc2 = get_adv_grad(model1.get_fixed_ansatz_circuit(), data[0], model1.observables)
+
+    print(qc2)
+    res = model1.evaluate_encoding_gradient(data, 1, 1e-14)[0].reshape(-1)
     print(res)
+    print(np.gradient(res))
+
+
+
+# if __name__ == '__main__':
+#     # 获取数据源，dataloader
+#     n_test_samples = 64
+#     batch_size = 1
+#     X_test = datasets.MNIST(root='../data', train=False, download=True,
+#                             transform=transforms.Compose([transforms.Resize([16, 16]), transforms.ToTensor()]))
+#
+#     idx = np.concatenate(
+#         (np.where(X_test.targets == 0)[0][:n_test_samples], np.where(X_test.targets == 1)[0][:n_test_samples]))
+#     X_test.data = X_test.data[idx]
+#     X_test.targets = X_test.targets[idx]
+#     test_loader = torch.utils.data.DataLoader(X_test, batch_size=batch_size, shuffle=True)
+#     data_iter = iter(test_loader)
+#     inputs, labels = next(data_iter)
+#     param_circuit = getUtheta()
+#     #
+#     print(param_circuit)
+#     print(type(param_circuit), type(inputs))
+#     res = getAdvExample(param_circuit, inputs)
+#     print(res)
