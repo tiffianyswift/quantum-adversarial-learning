@@ -198,6 +198,7 @@ if __name__ == '__main__':
     plt.grid(True, which='both', ls='--')
     plt.tight_layout()
     plt.show()
+    print(model1.circuit)
 
 
 

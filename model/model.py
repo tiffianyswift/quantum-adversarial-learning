@@ -64,6 +64,9 @@ class AmplitudeModel:
                 right = self(x[idx:idx+1])
                 x[idx][i] = x_point - eps
                 left = self(x[idx:idx+1])
+                print("right", right)
+                print("left", left)
+                print("right-left", right-left)
                 grad[idx][i] = loss_grad * (right-left) / (2*eps)
                 x[idx][i] = x_point
         return grad
