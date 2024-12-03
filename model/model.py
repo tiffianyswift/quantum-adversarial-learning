@@ -1,3 +1,5 @@
+from copy import deepcopy
+
 from ansatz import RealAmplitude, FakeAmplitude
 from encoding import AmplitudeEncoding, AngleEncoding
 from observable import TwoClassifyObservable
@@ -53,20 +55,18 @@ class AmplitudeModel:
 
     # 求解估计梯度
     def evaluate_encoding_gradient(self, x, loss_grad, eps=1e-13):
-        original_x = x
+        original_x = deepcopy(x)
         num_samples = x.shape[0]
         grad = np.zeros(original_x.shape)
         for idx in range(num_samples):
             for i, x_point in enumerate(original_x[idx]):
                 x[idx][i] = x_point + eps
-                right = self(x[idx:idx+1][:])
+                right = self(x[idx:idx+1])
                 x[idx][i] = x_point - eps
-                left = self(x[idx:idx+1][:])
-                # 还有必要np.sum吗？
-                grad[idx][i] = np.sum(loss_grad * (right-left) / (2*eps))
+                left = self(x[idx:idx+1])
+                grad[idx][i] = loss_grad * (right-left) / (2*eps)
                 x[idx][i] = x_point
         return grad
-
 
     def solve_ansatz_gradient(self, x, loss_grad):
         original_param = self.param
@@ -124,26 +124,37 @@ class AngleModel:
     # 求解析梯度
     def solve_encoding_gradient(self, x, loss_grad):
         # 不像ansatz可以同时求一个batch对于ansatz参数的梯度，必须逐个求
-        original_x = x
+        original_x = deepcopy(x)
         num_samples = x.shape[0]
         grad = np.zeros(original_x.shape)
         for idx in range(num_samples):
             for i, x_point in enumerate(original_x[idx]):
                 x[idx][i] = x_point + np.pi / 2
-                exps_right = self(x[idx:idx+1][:])
+                exps_right = self(x[idx:idx+1])
 
                 x[idx][i] = x_point - np.pi / 2
-                exps_left = self(x[idx:idx+1][:])
+                exps_left = self(x[idx:idx+1])
 
-                grad[idx][i] = np.sum(loss_grad * (exps_right - exps_left) / 2)
+                grad[idx][i] = loss_grad * (exps_right - exps_left) / 2
 
                 x[idx][i] = x_point
 
         return grad
 
     # 求解估计梯度
-    def evaluate_encoding_gradient(self):
-        pass
+    def evaluate_encoding_gradient(self, x, loss_grad, eps=1e-5):
+        original_x = deepcopy(x)
+        num_samples = x.shape[0]
+        grad = np.zeros(original_x.shape)
+        for idx in range(num_samples):
+            for i, x_point in enumerate(original_x[idx]):
+                x[idx][i] = x_point + eps
+                right = self(x[idx:idx+1])
+                x[idx][i] = x_point - eps
+                left = self(x[idx:idx+1])
+                grad[idx][i] = loss_grad * (right-left) / (2*eps)
+                x[idx][i] = x_point
+        return grad
 
     def solve_ansatz_gradient(self, x, loss_grad):
         original_param = self.param
@@ -160,8 +171,18 @@ class AngleModel:
             self.param[i] = param
         return grad
 
-    def evaluate_ansatz_gradient(self):
-        pass
+    def evaluate_ansatz_gradient(self, x, loss_grad, eps=1e-5):
+        original_param = self.param
+        grad = np.zeros(original_param.shape)
+        for i, param in enumerate(original_param):
+            self.param[i] = param + eps
+            right = self(x)
+            self.param[i] = param - eps
+            left = self(x)
+            grad[i] = np.sum(loss_grad*(right-left)/(2*eps))
+            self.param[i] = param
+        return grad
+
 
 
 

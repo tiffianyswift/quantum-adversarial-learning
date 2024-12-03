@@ -133,16 +133,17 @@ def get_adv_grad(param_circuit, inputs, observable):
         qc.barrier()
         qc.x(0)
         qc.barrier()
-        qc.compose(param_circuit, inplace=True)
+        qc.compose(param_circuit, qubits=range(1, n_qubits+1), inplace=True)
         qc.barrier()
         qc.cz(control_qubit=0, target_qubit=1)
         qc.barrier()
         qc.h(0)
         qc.barrier()
-        # print(qc)
-        lis = [("IIIIZ", 1)]
+        print(qc)
+        lis = [("IIZ", 1)]
         observable = SparsePauliOp.from_list(lis)
         job = estimator.run(qc, observable)
+        print("job.result()", job.result())
         grad_list.append(job.result().values[0])
 
     return grad_list
@@ -150,19 +151,54 @@ def get_adv_grad(param_circuit, inputs, observable):
 
 
 if __name__ == '__main__':
-    ansat = RealAmplitude(4, 2)
-    observable = TwoClassifyObservable(4)
-    model1 = AmplitudeModel(4, ansat, observable)
+    getUtheta()
+    ansat = RealAmplitude(2, 1)
+    observable = TwoClassifyObservable(2)
+    model1 = AmplitudeModel(2, ansat, observable)
+    model1.param = np.array([np.pi, np.pi, np.pi, np.pi])
 
-    data = torch.tensor(np.random.randn(1, 16))
-    print(type(model1.ansatz.circuit), type(data[0]))
-    circuit = QuantumCircuit(4)
-    qc2 = get_adv_grad(model1.get_fixed_ansatz_circuit(), data[0], model1.observables)
+    data = torch.tensor(np.array([[0.5, 0.5, 0.5, 0.5]]))
 
-    print(qc2)
-    res = model1.evaluate_encoding_gradient(data, 1, 1e-14)[0].reshape(-1)
-    print(res)
-    print(np.gradient(res))
+    import matplotlib.pyplot as plt
+
+    start_exponent = -1
+    end_exponent = -20
+
+    values = []
+    differences = []
+
+    for exponent in range(start_exponent, end_exponent-1, -1):
+        value = 10 ** exponent
+        res1 = get_adv_grad(model1.get_fixed_ansatz_circuit(), data[0], model1.observables)
+        res2 = getAdvGrad(model1.get_fixed_ansatz_circuit(), data[0], "Z")
+        res3 = model1.evaluate_encoding_gradient(data, 1, value)[0].reshape(-1)
+        print(res1)
+        print(res2)
+        print(res3)
+        absolute_difference = abs(res1-res3)
+
+        values.append(value)
+        differences.append(np.sum(absolute_difference))
+
+        print(value, np.sum(absolute_difference))
+
+    plt.figure(figsize=(12, 8))
+    plt.plot(values, differences, marker='o', linestyle='-', color='b')
+    plt.xscale('log')
+    plt.yscale('log')
+    plt.xlabel('Value (10^exponent)')
+    plt.ylabel('Absolute Difference Sum')
+    plt.title('Absolute Difference Sum vs Value')
+
+    exponents = range(start_exponent, end_exponent - 1, -1)
+    xticks = [10 ** exp for exp in exponents]
+    xtick_labels = [f'1e{exp}' for exp in exponents]
+    plt.xticks(xticks, xtick_labels, rotation=45)
+
+    plt.grid(True, which='both', ls='--')
+    plt.tight_layout()
+    plt.show()
+
 
 
 
