@@ -17,86 +17,9 @@ from model import AmplitudeModel
 from observable import TwoClassifyObservable
 from qiskit.primitives import Estimator
 
-n_qubits = 8
-q_depth = 2
 
 
 
-
-
-class Hybrid(torch.nn.Module):
-    def __init__(self, backend):
-        super().__init__()
-        self.quantum_circuit = QuantumCircuit(n_qubits, q_depth, backend)
-        self.q_params = torch.nn.Parameter(q_delta * torch.randn((q_depth+1) * n_qubits*3))
-    def forward(self, inputv):
-        return HybridFunction.apply(inputv, self.q_params, self.quantum_circuit)
-
-# getUtheta 获取分类器的参数化量子线路
-# path 模型的路径
-# 获取模型参数，构造分类器线路
-def getUtheta():
-    model = torch.load("..\model_saved\model_epoch_13.pth")
-
-
-# 获取某个态对于某个坐标的倒数，其结果也是一个态
-def getGrad(n_qubits, num):
-    positions = []
-    position = 1
-
-    while num > 0:
-        if num & 1:
-            positions.append(position)
-        num >>= 1
-        position += 1
-
-    qc = QuantumCircuit(n_qubits, name="getGrad")
-    for item in positions:
-        qc.cnot(0, item)
-    return qc
-
-
-# 获取对抗样本需要添加的梯度
-# param_circuit 被攻击的模型的参数化量子线路
-# inputs 用于计算梯度的样本
-# observable param_circuit所使用的可观测量
-
-def getAdvGrad(param_circuit, inputs, observable):
-    n_qubits = param_circuit.num_qubits
-    inputqc = QuantumCircuit(n_qubits + 1)
-
-    target_state = inputs / np.linalg.norm(inputs)
-    target_state = np.array(target_state, dtype=np.float64)
-    _EPS = 1e-10
-    while not math.isclose(sum(np.absolute(target_state) ** 2), 1.0, abs_tol=_EPS):
-        norm = np.sqrt(sum(np.abs(target_state) ** 2))
-        target_state = target_state / norm
-
-    print("target_state", type(target_state))
-    controlled_prepare = StatePreparation(target_state).control()
-
-    inputqc.h(0)
-    inputqc.append(controlled_prepare, range(n_qubits + 1))
-
-    grad_list = []
-
-    for index, datapoint in enumerate(inputs):
-        qc = deepcopy(inputqc)
-        grad_circuit = getGrad(n_qubits + 1, index)
-        qc.x(0)
-        qc.append(grad_circuit, range(n_qubits + 1))
-        qc.x(0)
-
-        qc.append(param_circuit, range(1, n_qubits + 1))
-        qc.cz(control_qubit=0, target_qubit=1)
-        qc.h(0)
-
-        qc.save_expectation_value(quantum_info.Pauli(observable), [0], observable)
-
-        transpiled_qc = transpile(qc, Aer.get_backend('qasm_simulator'))
-        job = Aer.get_backend('qasm_simulator').run(transpiled_qc)
-        grad_list.append(job.result().data()[observable])
-    return grad_list
 
 def get_adv_grad(param_circuit, inputs, observable):
     def get_grad_circuit(n_qubits, index):
@@ -139,11 +62,11 @@ def get_adv_grad(param_circuit, inputs, observable):
         qc.barrier()
         qc.h(0)
         qc.barrier()
-        print(qc)
-        lis = [("IIZ", 1)]
+        # print(qc)
+        lis = [("IIZ", 2)]
         observable = SparsePauliOp.from_list(lis)
         job = estimator.run(qc, observable)
-        print("job.result()", job.result())
+        # print("job.result()", job.result())
         grad_list.append(job.result().values[0])
 
     return grad_list
@@ -151,13 +74,12 @@ def get_adv_grad(param_circuit, inputs, observable):
 
 
 if __name__ == '__main__':
-    getUtheta()
-    ansat = RealAmplitude(2, 1)
+    ansat = RealAmplitude(2, 2)
     observable = TwoClassifyObservable(2)
     model1 = AmplitudeModel(2, ansat, observable)
-    model1.param = np.array([np.pi, np.pi, np.pi, np.pi])
+    model1.param = np.random.randn(4)
 
-    data = torch.tensor(np.array([[0.5, 0.5, 0.5, 0.5]]))
+    data = torch.tensor(np.array([[0, 1/np.sqrt(2), 1/np.sqrt(2), 0]]))
 
     import matplotlib.pyplot as plt
 
@@ -170,10 +92,8 @@ if __name__ == '__main__':
     for exponent in range(start_exponent, end_exponent-1, -1):
         value = 10 ** exponent
         res1 = get_adv_grad(model1.get_fixed_ansatz_circuit(), data[0], model1.observables)
-        res2 = getAdvGrad(model1.get_fixed_ansatz_circuit(), data[0], "Z")
         res3 = model1.evaluate_encoding_gradient(data, 1, value)[0].reshape(-1)
         print(res1)
-        print(res2)
         print(res3)
         absolute_difference = abs(res1-res3)
 
@@ -198,7 +118,7 @@ if __name__ == '__main__':
     plt.grid(True, which='both', ls='--')
     plt.tight_layout()
     plt.show()
-    print(model1.circuit)
+
 
 
 

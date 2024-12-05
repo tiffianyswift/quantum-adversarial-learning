@@ -12,8 +12,8 @@ class RealAmplitude:
         for i in range(0, self.reps):
             for j in range(0, self.n_qubits):
                 self.circuit.ry(self.param[i * self.n_qubits + j], j)
-            # for j in range(self.n_qubits - 1, 0, -1):
-            #     self.circuit.cx(j - 1, j)
+            for j in range(self.n_qubits - 1, 0, -1):
+                self.circuit.cx(j - 1, j)
             self.circuit.barrier()
 
         for j in range(0, self.n_qubits):
@@ -24,8 +24,8 @@ class RealAmplitude:
         for i in range(0, self.reps):
             for j in range(0, self.n_qubits):
                 fixed_circuit.ry(param[i * self.n_qubits + j], j)
-            # for j in range(self.n_qubits - 1, 0, -1):
-            #     fixed_circuit.cx(j-1, j)
+            for j in range(self.n_qubits - 1, 0, -1):
+                fixed_circuit.cx(j-1, j)
             fixed_circuit.barrier()
 
         for j in range(0, self.n_qubits):
