@@ -1,13 +1,22 @@
 from copy import deepcopy
 
+from qiskit.opflow import PauliOp
+from qiskit.quantum_info import Operator
+
 from ansatz import RealAmplitude, FakeAmplitude
 from encoding import AmplitudeEncoding, AngleEncoding
+from qiskit.circuit.library import StatePreparation
+from qiskit.circuit import Gate
+from qiskit.circuit.library import PauliEvolutionGate
 from observable import TwoClassifyObservable
 
 from qiskit.primitives import Estimator
+from qiskit import QuantumCircuit
+from qiskit.quantum_info import SparsePauliOp
 
 import numpy as np
 import torch
+import math
 
 import os.path
 
@@ -49,7 +58,69 @@ class AmplitudeModel:
             self.param = np.load(path)
 
     # 求解析梯度
-    def solve_encoding_gradient(self):
+    # 参考论文：Yan J, Yan L, Zhang S. A new method of constructing adversarial examples for quantum variational circuits[J]. Chinese Physics B, 2023, 32(7): 070304.
+    def solve_encoding_gradient(self, x, loss_grad):
+        def get_grad_circuit(n_qubits, index):
+            positions = [pos for pos, bit in enumerate(bin(index)[:1:-1], start=1) if bit == '1']
+            grad_circuit = QuantumCircuit(n_qubits, name="get_amplitude_state_grad")
+            for pos in positions:
+                grad_circuit.cnot(0, pos)
+            return grad_circuit
+
+        def normalize_state(state_vector):
+            eps = 1e-10
+            while not math.isclose(sum(np.abs(state_vector) ** 2), 1.0, abs_tol=eps):
+                state_vector /= np.linalg.norm(state_vector)
+            return state_vector
+
+        original_x = deepcopy(x)
+        num_samples = x.shape[0]
+        grad = np.zeros(original_x.shape)
+        for idx in range(num_samples):
+            input_qc = QuantumCircuit(self.n_qubits + 1)
+            target_state = normalize_state(x[idx])
+            target_state = np.array(target_state, dtype=np.float64)
+            controlled_prepare = StatePreparation(target_state).control()
+
+            input_qc.h(0)
+            input_qc.append(controlled_prepare, range(self.n_qubits + 1))
+
+            estimator = Estimator()
+
+            for i, x_point in enumerate(original_x[idx]):
+                qc = deepcopy(input_qc)
+                qc.barrier()
+                grad_circuit = get_grad_circuit(self.n_qubits + 1, i)
+                qc.x(0)
+                qc.barrier()
+                qc.compose(grad_circuit, inplace=True)
+                qc.barrier()
+                qc.x(0)
+                qc.barrier()
+                qc.compose(self.get_fixed_ansatz_circuit(), qubits=range(1, self.n_qubits + 1), inplace=True)
+                qc.barrier()
+                # 当matrix不是酉的，会存在问题
+                matrix = self.observables.to_matrix()
+                operator = Operator(matrix).to_instruction()
+                qc.append(operator.control(), [0, 1, 2])
+
+                operator = Operator(matrix)
+                ops = SparsePauliOp.from_operator(operator).to_operator().to_instruction()
+
+                qc.barrier()
+                qc.h(0)
+                qc.barrier()
+                # 存在问题
+                lis = [("I"*self.n_qubits+"Z", 2)]
+
+                observable = SparsePauliOp.from_list(lis)
+                job = estimator.run(qc, observable)
+
+                grad[idx][i] = job.result().values[0]
+
+        return grad
+
+
 
         pass
 
@@ -83,8 +154,17 @@ class AmplitudeModel:
             self.param[i] = param
         return grad
 
-    def evaluate_ansatz_gradient(self):
-        pass
+    def evaluate_ansatz_gradient(self, x, loss_grad, eps=1e-5):
+        original_param = self.param
+        grad = np.zeros(original_param.shape)
+        for i, param in enumerate(original_param):
+            self.param[i] = param + eps
+            right = self(x)
+            self.param[i] = param - eps
+            left = self(x)
+            grad[i] = np.sum(loss_grad * (right - left) / (2 * eps))
+            self.param[i] = param
+        return grad
 
 
 class AngleModel:
