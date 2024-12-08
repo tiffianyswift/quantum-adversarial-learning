@@ -1,8 +1,7 @@
-from ansatz import RealAmplitude, FakeAmplitude
-from encoding import AmplitudeEncoding
-from model import AmplitudeModel
-from observable import TwoClassifyObservable
-from utils.util import get_grad
+from model_training_related.ansatz import RealAmplitude, FakeAmplitude
+from model_training_related.encoding import AmplitudeEncoding
+from model_training_related.model import AmplitudeModel
+from model_training_related.observable import TwoClassifyObservable
 from data_preprocess.dataloader import get_dataloader
 
 import numpy as np
@@ -161,9 +160,12 @@ def train(mp):
 
             loss = loss_func(output, target.float())
             loss.backward()
-            grad1 = torch.tensor(get_grad(model, data, np.array(output.grad)), dtype=torch.float32)
 
-            torch_param.grad = grad1
+            loss_grad = output.grad.reshape(train_batch_size, 1)
+            ansatz_grad = torch.tensor(model.solve_ansatz_gradient(data))
+            batch_ansatz_grad = torch.sum(loss_grad*ansatz_grad, dim=0)
+
+            torch_param.grad = batch_ansatz_grad
             optimizer.step()
             model.param = torch_param.detach().numpy()
             model.dump(param_dump_path)

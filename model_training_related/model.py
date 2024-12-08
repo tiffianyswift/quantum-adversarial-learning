@@ -1,24 +1,20 @@
 from copy import deepcopy
 
-from qiskit.opflow import PauliOp
 from qiskit.quantum_info import Operator
 
-from ansatz import RealAmplitude, FakeAmplitude
-from encoding import AmplitudeEncoding, AngleEncoding
 from qiskit.circuit.library import StatePreparation
-from qiskit.circuit import Gate
-from qiskit.circuit.library import PauliEvolutionGate
-from observable import TwoClassifyObservable
+
 
 from qiskit.primitives import Estimator
 from qiskit import QuantumCircuit
 from qiskit.quantum_info import SparsePauliOp
 
 import numpy as np
-import torch
 import math
 
 import os.path
+
+from model_training_related.encoding import AmplitudeEncoding, AngleEncoding
 
 np.set_printoptions(precision=65)  # 通常足够显示双精度浮点数的全部有效数字
 
@@ -59,7 +55,7 @@ class AmplitudeModel:
 
     # 求解析梯度
     # 参考论文：Yan J, Yan L, Zhang S. A new method of constructing adversarial examples for quantum variational circuits[J]. Chinese Physics B, 2023, 32(7): 070304.
-    def solve_encoding_gradient(self, x, loss_grad):
+    def solve_encoding_gradient(self, x):
         def get_grad_circuit(n_qubits, index):
             positions = [pos for pos, bit in enumerate(bin(index)[:1:-1], start=1) if bit == '1']
             grad_circuit = QuantumCircuit(n_qubits, name="get_amplitude_state_grad")
@@ -68,17 +64,20 @@ class AmplitudeModel:
             return grad_circuit
 
         def normalize_state(state_vector):
-            eps = 1e-10
+            eps = 1e-5
             while not math.isclose(sum(np.abs(state_vector) ** 2), 1.0, abs_tol=eps):
                 state_vector /= np.linalg.norm(state_vector)
             return state_vector
 
-        original_x = deepcopy(x)
+        original_shape = x.shape
         num_samples = x.shape[0]
-        grad = np.zeros(original_x.shape)
+        x = x.view(num_samples, -1)
+        grad = np.zeros(x.shape)
         for idx in range(num_samples):
             input_qc = QuantumCircuit(self.n_qubits + 1)
-            target_state = normalize_state(x[idx])
+            target_state = x[idx].reshape(-1)
+            target_state = normalize_state(target_state)
+
             target_state = np.array(target_state, dtype=np.float64)
             controlled_prepare = StatePreparation(target_state).control()
 
@@ -87,7 +86,8 @@ class AmplitudeModel:
 
             estimator = Estimator()
 
-            for i, x_point in enumerate(original_x[idx]):
+            for i, x_point in enumerate(target_state):
+                print(idx, i)
                 qc = deepcopy(input_qc)
                 qc.barrier()
                 grad_circuit = get_grad_circuit(self.n_qubits + 1, i)
@@ -102,10 +102,7 @@ class AmplitudeModel:
                 # 当matrix不是酉的，会存在问题
                 matrix = self.observables.to_matrix()
                 operator = Operator(matrix).to_instruction()
-                qc.append(operator.control(), [0, 1, 2])
-
-                operator = Operator(matrix)
-                ops = SparsePauliOp.from_operator(operator).to_operator().to_instruction()
+                qc.append(operator.control(), range(0, self.n_qubits + 1))
 
                 qc.barrier()
                 qc.h(0)
@@ -118,16 +115,14 @@ class AmplitudeModel:
 
                 grad[idx][i] = job.result().values[0]
 
-        return grad
-
-
-
-        pass
+        return grad.reshape(original_shape)
 
     # 求解估计梯度
-    def evaluate_encoding_gradient(self, x, loss_grad, eps=1e-13):
-        original_x = deepcopy(x)
+    def evaluate_encoding_gradient(self, x, eps=1e-5):
         num_samples = x.shape[0]
+        original_shape = x.shape
+        x = x.view(num_samples, -1)
+        original_x = deepcopy(x)
         grad = np.zeros(original_x.shape)
         for idx in range(num_samples):
             for i, x_point in enumerate(original_x[idx]):
@@ -135,34 +130,40 @@ class AmplitudeModel:
                 right = self(x[idx:idx+1])
                 x[idx][i] = x_point - eps
                 left = self(x[idx:idx+1])
-                grad[idx][i] = loss_grad * (right-left) / (2*eps)
+                grad[idx][i] = (right-left) / (2*eps)
                 x[idx][i] = x_point
+
         return grad
 
-    def solve_ansatz_gradient(self, x, loss_grad):
+    def solve_ansatz_gradient(self, x):
+        num_samples = x.shape[0]
+        num_param = self.param.shape[0]
         original_param = self.param
-        grad = np.zeros(original_param.shape)
+        grad = np.zeros((num_samples, num_param))
+
         for i, param in enumerate(original_param):
             self.param[i] = param + np.pi / 2
             exps_right = self(x)
-
             self.param[i] = param - np.pi / 2
             exps_left = self(x)
-            # 这里是算batch的
-            grad[i] = np.sum(loss_grad * (exps_right - exps_left) / 2)
+            grad[:, i] = (exps_right - exps_left) / 2
 
             self.param[i] = param
         return grad
 
-    def evaluate_ansatz_gradient(self, x, loss_grad, eps=1e-5):
+    def evaluate_ansatz_gradient(self, x, eps=1e-5):
+        num_samples = x.shape[0]
+        num_param = self.param.shape[0]
         original_param = self.param
-        grad = np.zeros(original_param.shape)
+        grad = np.zeros((num_samples, num_param))
+
         for i, param in enumerate(original_param):
             self.param[i] = param + eps
             right = self(x)
             self.param[i] = param - eps
             left = self(x)
-            grad[i] = np.sum(loss_grad * (right - left) / (2 * eps))
+            grad[:, i] = (right - left) / (2 * eps)
+
             self.param[i] = param
         return grad
 
@@ -202,66 +203,75 @@ class AngleModel:
             self.param = np.load(path)
 
     # 求解析梯度
-    def solve_encoding_gradient(self, x, loss_grad):
-        # 不像ansatz可以同时求一个batch对于ansatz参数的梯度，必须逐个求
-        original_x = deepcopy(x)
+    def solve_encoding_gradient(self, x):
         num_samples = x.shape[0]
+        original_shape = x.shape
+        x = x.view(num_samples, -1)
+        original_x = deepcopy(x)
         grad = np.zeros(original_x.shape)
+
         for idx in range(num_samples):
             for i, x_point in enumerate(original_x[idx]):
                 x[idx][i] = x_point + np.pi / 2
                 exps_right = self(x[idx:idx+1])
-
                 x[idx][i] = x_point - np.pi / 2
                 exps_left = self(x[idx:idx+1])
-
-                grad[idx][i] = loss_grad * (exps_right - exps_left) / 2
-
+                grad[idx][i] = (exps_right - exps_left) / 2
                 x[idx][i] = x_point
 
-        return grad
+        return grad.reshape(original_shape)
 
     # 求解估计梯度
-    def evaluate_encoding_gradient(self, x, loss_grad, eps=1e-5):
-        original_x = deepcopy(x)
+    def evaluate_encoding_gradient(self, x, eps=1e-5):
         num_samples = x.shape[0]
+        original_shape = x.shape
+        x = x.view(num_samples, -1)
+        original_x = deepcopy(x)
         grad = np.zeros(original_x.shape)
+
         for idx in range(num_samples):
             for i, x_point in enumerate(original_x[idx]):
                 x[idx][i] = x_point + eps
                 right = self(x[idx:idx+1])
                 x[idx][i] = x_point - eps
                 left = self(x[idx:idx+1])
-                grad[idx][i] = loss_grad * (right-left) / (2*eps)
+                grad[idx][i] = (right-left) / (2*eps)
                 x[idx][i] = x_point
-        return grad
+        return grad.reshape(original_shape)
 
-    def solve_ansatz_gradient(self, x, loss_grad):
+    def solve_ansatz_gradient(self, x):
+        num_samples = x.shape[0]
+        num_param = self.param.shape[0]
         original_param = self.param
-        grad = np.zeros(original_param.shape)
+        grad = np.zeros((num_samples, num_param))
+
         for i, param in enumerate(original_param):
             self.param[i] = param + np.pi / 2
             exps_right = self(x)
-
             self.param[i] = param - np.pi / 2
             exps_left = self(x)
-            # 这里是算batch的
-            grad[i] = np.sum(loss_grad * (exps_right - exps_left)/2)
+            grad[:, i] = (exps_right - exps_left) / 2
 
             self.param[i] = param
         return grad
 
-    def evaluate_ansatz_gradient(self, x, loss_grad, eps=1e-5):
+    def evaluate_ansatz_gradient(self, x, eps=1e-5):
+        num_samples = x.shape[0]
+        num_param = self.param.shape[0]
         original_param = self.param
-        grad = np.zeros(original_param.shape)
+        grad = np.zeros((num_samples, num_param))
+
         for i, param in enumerate(original_param):
             self.param[i] = param + eps
             right = self(x)
             self.param[i] = param - eps
             left = self(x)
-            grad[i] = np.sum(loss_grad*(right-left)/(2*eps))
+            grad[:, i] = (right - left) / (2 * eps)
+
             self.param[i] = param
         return grad
+
+
 
 
 
