@@ -18,9 +18,9 @@ class FGSMAttack:
         if examples_gradient is None:
             examples_gradient = model.get_input_grad(examples, labels)
         data_grad = examples_gradient.reshape(examples.shape)
-        sign_data_grad = np.sign(data_grad)
+        sign_data_grad = torch.sign(data_grad)
         adv_example = examples + self.epsilon * sign_data_grad
-        adv_example = np.clip(adv_example, 0, 1)
+        adv_example = torch.clamp(adv_example, 0, 1)
         return adv_example
 
     # 使用epsilons生成对抗样本
