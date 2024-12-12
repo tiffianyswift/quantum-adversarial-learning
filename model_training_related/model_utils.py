@@ -12,7 +12,7 @@ import torch
 
 def get_predict_label(output, loss_func_name):
     if loss_func_name == 'bce':
-        return np.round(output)
+        return torch.round(output)
     else:
         return None
 

@@ -1,5 +1,5 @@
 # Carlini & Wagner Attack
-import numpy as np
+import torch.nn.functional as F
 import torch
 
 
@@ -14,22 +14,49 @@ class CWAttack:
         self.kappa = kappa
         self.learning_rate = learning_rate
         self.iters = iters
-        self.initial_const = 0.01
-        self.targeted = False
+        self.initial_const = initial_const
+        self.targeted = targeted
 
     def generate_adv_example(self, model, examples):
         original_examples = examples.clone()
-        w = np.zeros_like(examples)
         const = self.initial_const
-        perturbation = np.random.uniform(-0.001, 0.001, examples.shape)
+        perturbation = torch.empty_like(original_examples).uniform_(-0.001, 0.001)
         _, label = model.predict(examples)
-        targeted_label = np.abs(label-1)
+        targeted_label = int((1-label)[0])
 
-        # for _ in range(self.iters):
-        #     adv_examples = examples + perturbation
-        #     adv_examples = torch.clamp(adv_examples, 0, 1)
-        #     activation, current_labels = model.predict(adv_examples)
-        #     print(activation)
+        for i in range(self.iters):
+            adv_examples = examples + perturbation
+            adv_examples = torch.clamp(adv_examples, 0, 1)
+            activation, current_labels = model.predict(adv_examples)
+            activation.requires_grad_()
+
+            activations = torch.cat((activation, 1-activation), dim=0)
+
+            target_activation = activations[targeted_label]
+            other_activation = activations[1-targeted_label]
+            # other_activations = np.concatenate([activations[:targeted_label], activations[targeted_label+1:]])
+            # max_other_activation = np.max(other_activations)
+            if self.targeted:
+                loss1 = F.relu(other_activation - target_activation + self.kappa).mean()
+            else:
+                loss1 = F.relu(target_activation - other_activation + self.kappa).mean()
+
+            # loss2 = torch.norm(adv_examples - original_examples, p=2)
+            # loss = loss1 + const * loss2
+            loss = loss1
+            loss.backward()
+
+            data_grad = activation.grad * model.get_input_grad(adv_examples, current_labels).reshape(examples.shape)
+            if self.targeted:
+                perturbation = perturbation + self.learning_rate * data_grad.sign()
+            else:
+                perturbation = perturbation - self.learning_rate * data_grad.sign()
+            print("index", i)
+
+        adv_examples = examples + perturbation
+        return adv_examples
+
+
 
 
 

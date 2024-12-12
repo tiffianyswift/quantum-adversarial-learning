@@ -20,7 +20,7 @@ class MnistAmplitudeModel(BaseTargetModel):
         super().__init__(target_model, loss_func)
 
     def predict(self, x):
-        activation_value = self.model(x)
+        activation_value = torch.tensor(self.model(x))
         return activation_value, get_predict_label(activation_value, "bce")
 
 
