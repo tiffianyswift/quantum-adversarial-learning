@@ -1,3 +1,5 @@
+from attack.cw import CWAttack
+from attack.deepfool import DeepFoolAttack
 from attack.fgsm import FGSMAttack
 from attack.mim import MIMAttack
 from attack.pgd import PGDAttack
@@ -20,18 +22,18 @@ if __name__ == '__main__':
     batch = next(iter(dataloader))
     examples, labels = batch
 
-    attacker = PGDAttack(epsilon=0.15, epsilons=[0.15, 0.10, 0.05, 0.01], alpha=0.15)
+    attacker = CWAttack(kappa=0, learning_rate=0.01, iters=100, initial_const=0.01, targeted=False)
 
-    adv_examples = attacker.batch_generate_adv_example(target_model, examples, labels)
+    adv_examples = attacker.generate_adv_example(target_model, examples)
 
-    print(examples.shape)
-    activation_value, label_predicted = target_model.predict(examples)
-    print(activation_value)
-    print(label_predicted)
-
-    activation_value, label_predicted = target_model.predict(adv_examples)
-    print(activation_value)
-    print(label_predicted)
+    # print(examples.shape)
+    # activation_value, label_predicted = target_model.predict(examples)
+    # print(activation_value)
+    # print(label_predicted)
+    #
+    # activation_value, label_predicted = target_model.predict(adv_examples)
+    # print(activation_value)
+    # print(label_predicted)
 
     # for idx, epsilon in enumerate(epsilons):
     #     activation_value, label_predicted = target_model.predict(adv_examples[idx])
