@@ -1,5 +1,6 @@
 import numpy as np
 import pickle
+import os
 
 from torch.utils.data import Dataset
 from torchvision import datasets, transforms
@@ -15,8 +16,9 @@ def get_dataloader(dataset_name, dataset_type, dataset_code, per_class_size, bat
     assert dataset_name in ['mnist', 'iris', 'kdd-cup'], f"'{dataset_name}' is not dataset name"
     assert dataset_type in ['train', 'test'], f"'{dataset_type}' is not support"
     assert dataset_code in ['default'], f"'{dataset_code}' is not support"
+    script_dir = os.path.dirname(os.path.realpath(__file__))
     if dataset_name == 'mnist' and dataset_type == 'train' and dataset_code == 'default':
-        x_train = datasets.MNIST(root='../data', train=True, download=True,
+        x_train = datasets.MNIST(root=script_dir+'/../data', train=True, download=True,
                                  transform=transforms.Compose([transforms.Resize([16, 16]), transforms.ToTensor()]))
 
         idx = np.concatenate(
@@ -27,7 +29,7 @@ def get_dataloader(dataset_name, dataset_type, dataset_code, per_class_size, bat
         train_loader = torch.utils.data.DataLoader(x_train, batch_size=batch_size, shuffle=shuffle)
         return train_loader
     elif dataset_name == 'mnist' and dataset_type == 'test' and dataset_code == 'default':
-        x_test = datasets.MNIST(root='../data', train=False, download=True,
+        x_test = datasets.MNIST(root=script_dir+'/../data', train=False, download=True,
                                 transform=transforms.Compose([transforms.Resize([16, 16]), transforms.ToTensor()]))
         idx = np.concatenate(
             (np.where(x_test.targets == 0)[0][:per_class_size], np.where(x_test.targets == 1)[0][:per_class_size])
@@ -122,7 +124,7 @@ def get_dataloader(dataset_name, dataset_type, dataset_code, per_class_size, bat
         return test_loader
 
     elif dataset_name == 'cup99' and dataset_type == 'train' and dataset_code == 'default':
-        file_path = '../data/cup99/data.pickle'
+        file_path = script_dir + '/../data/cup99/data.pickle'
 
         with open(file_path, 'rb') as file:
             data_o = np.array(pickle.load(file))
@@ -149,7 +151,7 @@ def get_dataloader(dataset_name, dataset_type, dataset_code, per_class_size, bat
         return train_loader
 
     elif dataset_name == 'cup99' and dataset_type == 'test' and dataset_code == 'default':
-        file_path = '../data/cup99/data.pickle'
+        file_path = script_dir + '/../data/cup99/data.pickle'
 
         with open(file_path, 'rb') as file:
             data_o = np.array(pickle.load(file))

@@ -24,7 +24,7 @@ if __name__ == '__main__':
 
     attacker = CWAttack(kappa=0, learning_rate=0.01, iters=5, initial_const=0.01, targeted=False)
 
-    adv_examples = attacker.generate_adv_example(target_model, examples)
+    adv_examples = attacker.generate_adv_example(target_model, examples, labels)
 
     # print(examples.shape)
     activation_value, label_predicted = target_model.predict(examples)
