@@ -39,7 +39,6 @@ class DeepFoolAttack:
             iteration += 1
         return adv_examples
 
-
     def batch_generate_adv_example(self, model, examples, labels):
         adv_examples = torch.empty(len(self.epsilons), *examples.shape)
         original_epsilon = self.epsilon
